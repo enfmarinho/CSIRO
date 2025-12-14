@@ -3,7 +3,7 @@ import torch
 class Config:
     # Paths
     DATA_DIR = 'dataset'
-    OUTPUT_DIR = 'outputs'
+    OUTPUT_DIR = 'checkpoints'
     
     # Model
     BACKBONE_MODEL = 'convnext_small'
