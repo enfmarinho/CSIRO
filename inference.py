@@ -27,10 +27,10 @@ def extract_image_id(sample_id):
 
 warnings.filterwarnings('ignore')
 
-# --- Inference-Specific Configuration ---
+# Append inference specific configuration
 class Config(TrainConfig):
-    DATA_DIR = '../input/csiro-biomass'
-    MODEL_DIR = '../input/csiro-biomass-checkpoints'
+    DATA_DIR = '/kaggle/input/csiro-biomass'
+    MODEL_DIR = '/kaggle/input/csiro/pytorch/default/1' 
     
     FOLDS_TO_INFER = [0, 1, 2, 3, 4] 
 
@@ -42,7 +42,6 @@ class Config(TrainConfig):
     USE_TTA = True 
     TTA_ROTATIONS = True
     
-    # Output
     OUTPUT_PATH = 'submission.csv'
 
 class BiomassTestDataset(Dataset):
@@ -80,7 +79,6 @@ def get_transforms_tta():
     return transforms.Compose([
         transforms.Resize((Config.IMG_SIZE, Config.IMG_SIZE)),
         transforms.ToTensor(),
-        # Use the same normalization as in training
         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
     ])
 
@@ -88,7 +86,7 @@ def load_models_for_ensemble(folds):
     """
     Loads trained models and associated preprocessing info for the specified folds.
     
-    Returns: A list of (model, preprocessing_info, target_names) tuples.
+    Returns: A list of (model, preprocessing_info) tuples and target_names.
     """
     
     print("="*60)
@@ -96,54 +94,64 @@ def load_models_for_ensemble(folds):
     print("="*60)
     
     ensemble_info = []
+    target_names = None
     
     for fold_idx in folds:
         model_path = os.path.join(Config.MODEL_DIR, f'best_model_fold{fold_idx}.pth')
         preprocessing_path = os.path.join(Config.MODEL_DIR, f'preprocessing_info_fold{fold_idx}.pkl')
         
-        if not os.path.exists(model_path) or not os.path.exists(preprocessing_path):
-            print(f"WARNING: Files for fold {fold_idx} not found. Skipping.")
+        if not os.path.exists(model_path):
+            print(f"WARNING: Model for fold {fold_idx} not found at {model_path}. Skipping.")
+            continue
+        if not os.path.exists(preprocessing_path):
+             print(f"WARNING: Preprocessing info for fold {fold_idx} not found at {preprocessing_path}. Skipping.")
+             continue
+
+        try:
+            # Load preprocessing info to get target names and num_classes
+            with open(preprocessing_path, 'rb') as f:
+                preprocessing_info = pickle.load(f)
+            
+            # Load checkpoint
+            checkpoint = torch.load(model_path, map_location=Config.DEVICE)
+            
+            model_config = checkpoint['config']
+            
+            model = MultiTaskBiomassModel(
+                model_name=model_config['model_name'],
+                num_biomass_targets=model_config['num_biomass_targets'],
+                num_states=model_config['num_states'],
+                num_species=model_config['num_species'],
+                use_multitask=model_config['use_multitask'],
+                pretrained=False
+            )
+            
+            # Load weights
+            model.load_state_dict(checkpoint['model_state_dict'])
+            model = model.to(Config.DEVICE)
+            model.eval()
+            
+            print(f"Fold {fold_idx} Model Loaded: {model_config['model_name']} | Val Loss: {checkpoint.get('val_loss', 'N/A'):.4f}")
+
+            ensemble_info.append((model, preprocessing_info))
+            
+            # Set target names from the first loaded fold
+            if target_names is None:
+                target_names = preprocessing_info['target_names'] 
+
+        except Exception as e:
+            print(f"ERROR loading fold {fold_idx}: {e}. Skipping.")
             continue
 
-        # Load preprocessing info
-        with open(preprocessing_path, 'rb') as f:
-            preprocessing_info = pickle.load(f)
-        
-        # Load checkpoint
-        checkpoint = torch.load(model_path, map_location=Config.DEVICE)
-        
-        # Create model (using the class imported from your model.py)
-        model_config = checkpoint['config']
-        model = MultiTaskBiomassModel(
-            model_name=model_config['model_name'],
-            num_biomass_targets=model_config['num_biomass_targets'],
-            num_states=model_config['num_states'],
-            num_species=model_config['num_species'],
-            use_multitask=model_config['use_multitask'],
-            pretrained=False # Use False, as weights are loaded from the checkpoint
-        )
-        
-        # Load weights
-        model.load_state_dict(checkpoint['model_state_dict'])
-        model = model.to(Config.DEVICE)
-        model.eval()
-        
-        print(f"Fold {fold_idx} Model Loaded: {model_config['model_name']}")
-        print(f"  Val Loss: {checkpoint['val_loss']:.4f} | RMSE: {checkpoint['val_rmse']:.4f}")
-
-        ensemble_info.append((model, preprocessing_info))
 
     if not ensemble_info:
         raise RuntimeError("No models were successfully loaded for inference.")
         
-    # All models should use the same target names from their respective fold's preprocessing info
-    target_names = ensemble_info[0][1]['target_names'] 
-    
     return ensemble_info, target_names
 
 
 def predict(ensemble_info, test_loader):
-    """Make predictions on test set using the ensemble of models."""
+    """Make predictions on test set using the ensemble of models and TTA (if enabled)."""
     
     num_models = len(ensemble_info)
     print("\n" + "="*60)
@@ -158,19 +166,18 @@ def predict(ensemble_info, test_loader):
     
     with torch.no_grad():
         for images, img_ids in test_loader:
+            # Per-Model Prediction Loop
             images = images.to(Config.DEVICE)
             
-            # --- Per-Model Prediction Loop ---
-            batch_ensemble_preds = [] # Stores TTA-averaged prediction for one batch *per model*
+            batch_ensemble_preds = [] # Stores TTA-averaged prediction for one batch
             
             for model, _ in ensemble_info:
-                # Base prediction
-                outputs = model(images) 
+                tta_predictions = []
                 
-                # Test-Time Augmentation (TTA)
+                # Base prediction (No TTA)
+                tta_predictions.append(model(images)) 
+
                 if Config.USE_TTA:
-                    tta_predictions = [outputs]
-                    
                     # Horizontal flip
                     tta_predictions.append(model(torch.flip(images, dims=[3])))
                     
@@ -187,7 +194,8 @@ def predict(ensemble_info, test_loader):
                     tta_averaged_output = torch.stack(tta_predictions).mean(dim=0)
                     batch_ensemble_preds.append(tta_averaged_output.cpu().numpy())
                 else:
-                    batch_ensemble_preds.append(outputs.cpu().numpy())
+                    # If TTA is disabled, only the base prediction is used
+                    batch_ensemble_preds.append(tta_predictions[0].cpu().numpy())
 
             # Average the predictions from all models for this batch
             batch_ensemble_preds = np.array(batch_ensemble_preds) # Shape: (Num_Models, Batch_Size, Num_Targets)
@@ -218,10 +226,10 @@ def generate_submission(predictions, image_ids, test_df, target_names):
     # Create submission dataframe in the required 'sample_id', 'target' format
     submission_data = []
     for _, row in test_df.iterrows():
+        sample_id = row['sample_id']
         submission_data.append({
-            'sample_id': row['sample_id'],
-            # Look up the prediction from the map. Should always be found if test_df is correct.
-            'target': pred_map.get(row['sample_id'], 0.0) 
+            'sample_id': sample_id,
+            'target': pred_map.get(sample_id, 0.0) 
         })
     
     submission_df = pd.DataFrame(submission_data)
@@ -254,9 +262,10 @@ def run_inference():
     print("Loading test data...")
     print("="*60)
     
+    # Load the test CSV, which is in long format
     test_df = pd.read_csv(os.path.join(Config.DATA_DIR, 'test.csv'))
     
-    # Get unique images from the long-format test data
+    # Get unique images from the long-format test data for image loading
     test_df['image_id'] = test_df['sample_id'].apply(extract_image_id)
     test_unique = test_df[['image_id', 'image_path']].drop_duplicates().reset_index(drop=True)
     
