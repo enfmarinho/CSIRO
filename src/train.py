@@ -228,7 +228,7 @@ def train_model():
             )
             val_loss, val_rmse, val_mae = validate(model, val_loader, criterion_biomass)
             
-            train_losses.append(train_loss)
+            train_losses.append(biomass_loss) # only report the biomass loss for fair comparison with the val_losses
             val_losses.append(val_loss)
             
             scheduler.step(val_loss)
