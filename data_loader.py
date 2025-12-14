@@ -182,7 +182,7 @@ def get_transforms(train=True):
             # Geometric augmentation
             transforms.RandomHorizontalFlip(p=0.5),
             transforms.RandomVerticalFlip(p=0.5),
-            transforms.RandomRotation(10), # TODO maybe 30 ?
+            transforms.RandomRotation(30),
             
             # Color
             transforms.ColorJitter(
