@@ -70,18 +70,18 @@ class MultiTaskBiomassModel(nn.Module):
             nn.Linear(feat_dim, 1024),
             nn.BatchNorm1d(1024),
             nn.ReLU(),
-            nn.Dropout(0.4),
+            nn.Dropout(0.4), # TODO maybe increase dropout
             nn.Linear(1024, 512),
             nn.BatchNorm1d(512),
             nn.ReLU(),
-            nn.Dropout(0.3)
+            nn.Dropout(0.3)  # TODO maybe increase dropout
         )
         
         # Main task. Biomass regression head
         self.biomass_head = nn.Sequential(
             nn.Linear(512, 256),
             nn.ReLU(),
-            nn.Dropout(0.2),
+            nn.Dropout(0.2), # TOOD maybe increased dropout
             nn.Linear(256, 128),
             nn.ReLU(),
             nn.Linear(128, num_biomass_targets)
@@ -123,6 +123,11 @@ class MultiTaskBiomassModel(nn.Module):
         # Extract image features
         img_features = self.backbone(images)
         
+        # Global Average Pooling (GAP) for backbones that output 4D feature maps
+        if img_features.dim() == 4:
+            # Performs GAP by averaging over the Height (dim 2) and Width (dim 3) dimensions.
+            img_features = img_features.mean(dim=[2, 3])
+
         # Shared feature representation
         shared_features = self.feature_extractor(img_features)
         
