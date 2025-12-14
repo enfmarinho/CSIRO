@@ -88,18 +88,18 @@ class MultiTaskBiomassModel(nn.Module):
             nn.Linear(feat_dim, 1024),
             nn.BatchNorm1d(1024),
             nn.ReLU(),
-            nn.Dropout(0.4), # TODO maybe increase dropout
+            nn.Dropout(0.4),
             nn.Linear(1024, 512),
             nn.BatchNorm1d(512),
             nn.ReLU(),
-            nn.Dropout(0.3)  # TODO maybe increase dropout
+            nn.Dropout(0.3)
         )
         
         # Main task. Biomass regression head
         self.biomass_head = nn.Sequential(
             nn.Linear(512, 256),
             nn.ReLU(),
-            nn.Dropout(0.2), # TOOD maybe increased dropout
+            nn.Dropout(0.2),
             nn.Linear(256, 128),
             nn.ReLU(),
             nn.Linear(128, num_biomass_targets)
