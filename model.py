@@ -3,6 +3,8 @@ Model Architecture
 """
 
 import torch.nn as nn
+from config import Config
+import torch.hub
 from torchvision import models
 
 class MultiTaskBiomassModel(nn.Module):
@@ -61,6 +63,22 @@ class MultiTaskBiomassModel(nn.Module):
             self.backbone = models.convnext_base(weights=weights)
             feat_dim = self.backbone.classifier[2].in_features
             self.backbone.classifier = nn.Identity()
+        elif model_name == 'dinov2_small':
+            # ViT-Small/14, 384 features
+            self.backbone = torch.hub.load(
+                'facebookresearch/dinov2', 
+                'dinov2_vits14', 
+                pretrained=pretrained
+            ).to(Config.DEVICE)
+            feat_dim = 384
+        elif model_name == 'dinov2_base':
+            # ViT-Base/14, 768 features
+            self.backbone = torch.hub.load(
+                'facebookresearch/dinov2', 
+                'dinov2_vitb14', 
+                pretrained=pretrained
+            ).to(Config.DEVICE)
+            feat_dim = 768
             
         else:
             raise ValueError(f"Unknown model: {model_name}")
@@ -123,9 +141,16 @@ class MultiTaskBiomassModel(nn.Module):
         # Extract image features
         img_features = self.backbone(images)
         
-        # Global Average Pooling (GAP) for backbones that output 4D feature maps
-        if img_features.dim() == 4:
-            # Performs GAP by averaging over the Height (dim 2) and Width (dim 3) dimensions.
+        if self.model_name.startswith('dinov2'):
+            # DINOv2 (ViT) output is typically 3D: (B, L, D). 
+            # Only extract the CLS token (idx 0) if the tensor is 3D.
+            if img_features.dim() == 3:
+                img_features = img_features[:, 0, :]
+            # If img_features.dim() is 2 the CLS token is already extracted, so skip this
+            
+        elif img_features.dim() == 4:
+            # CNN backbones output a 4D tensor (B, C, H, W).
+            # Apply Global Average Pooling (GAP) to collapse H and W. (fix for ConvNeXt)
             img_features = img_features.mean(dim=[2, 3])
 
         # Shared feature representation
