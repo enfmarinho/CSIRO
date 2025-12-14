@@ -18,7 +18,7 @@ class Config:
     
     # Cross-validation
     NUM_FOLDS = 5
-    TRAIN_FOLD = 0  # Which fold to train, or use -1 to train all folds. Used for testing
+    TRAIN_FOLD = -1
     
     # Multi-task learning
     USE_MULTITASK = True
