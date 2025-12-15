@@ -6,8 +6,8 @@ class Config:
     OUTPUT_DIR = 'checkpoints'
     
     # Model
-    BACKBONE_MODEL = 'convnext_small'
-    IMG_SIZE = 512
+    BACKBONE_MODEL = 'dinov2_small'
+    IMG_SIZE = 532
     
     # Training
     BATCH_SIZE = 16
